@@ -2,6 +2,8 @@
 
 English | [中文](README.zh-CN.md)
 
+[![Build and Release](https://github.com/GerryDush/aah/actions/workflows/build-release.yml/badge.svg)](https://github.com/GerryDush/aah/actions/workflows/build-release.yml)
+
 `aaa` is a small command-line SSH server manager written in C. It turns a complete SSH command such as `ssh -p 2222 admin@192.168.1.100` into a short, memorable command such as `aaa production`.
 
 ## Overview
@@ -23,6 +25,7 @@ When you work with several SSH servers, remembering every host, user, and port q
 - Use full commands or single-letter aliases.
 - Store connection details in `~/.aah/servers`.
 - Support IPv4, hostnames, and IPv6 addresses.
+- Build on Windows, macOS, and Linux.
 
 ## Requirements
 
@@ -38,7 +41,7 @@ cmake -S . -B build
 cmake --build build
 ```
 
-The executable is generated at `build/aaa`.
+The executable is generated at `build/aaa` on macOS and Linux. With the default Visual Studio generator on Windows, it is generated at `build/Release/aaa.exe`.
 
 The examples below assume that `aaa` is available in your `PATH`.
 
@@ -159,3 +162,14 @@ When a redirect URL is configured, `aaa` requests the URL before connecting and 
 ### Password security
 
 Passwords are stored as plain text in `~/.aah/servers`. The configuration directory and file are restricted to the current user with permissions `0700` and `0600`, but SSH keys are still recommended whenever possible. Supplying a password on the command line may also save it in your shell history.
+
+On Windows, the configuration is stored under `%USERPROFILE%/.aah/servers` when `HOME` is unavailable. The POSIX `0700` and `0600` permission modes apply only to macOS and Linux.
+
+## Automated releases
+
+GitHub Actions builds and tests the project on Windows, macOS, and Linux for every push to `main` and every pull request. Push a version tag to create a GitHub Release containing archives for all three platforms and a `SHA256SUMS.txt` file:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```

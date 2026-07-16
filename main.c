@@ -1,14 +1,22 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <direct.h>
+#include <process.h>
+#define popen _popen
+#define pclose _pclose
+#else
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <getopt.h>
-#include <ctype.h>
-#include <time.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
+#endif
 #endif
 
 #define MAX_NAME    64
@@ -36,6 +44,12 @@ server_t *head = NULL;
 static char executable_path[MAX_EXEC_PATH];
 
 void init_executable_path(const char *argv0) {
+#ifdef _WIN32
+    DWORD len = GetModuleFileNameA(NULL, executable_path, sizeof(executable_path));
+    if (len == 0 || len >= (DWORD)sizeof(executable_path))
+        executable_path[0] = '\0';
+    return;
+#else
     char raw_path[MAX_EXEC_PATH];
     raw_path[0] = '\0';
 
@@ -55,6 +69,30 @@ void init_executable_path(const char *argv0) {
 
     if (!realpath(raw_path, executable_path))
         executable_path[0] = '\0';
+#endif
+}
+
+const char *get_home_directory(void) {
+    const char *home = getenv("HOME");
+#ifdef _WIN32
+    if (!home || home[0] == '\0')
+        home = getenv("USERPROFILE");
+#endif
+    return home;
+}
+
+char *next_config_field(char **cursor) {
+    if (!cursor || !*cursor) return NULL;
+
+    char *field = *cursor;
+    char *separator = strchr(field, '|');
+    if (separator) {
+        *separator = '\0';
+        *cursor = separator + 1;
+    } else {
+        *cursor = NULL;
+    }
+    return field;
 }
 
 int is_password_prompt(const char *prompt) {
@@ -93,7 +131,7 @@ void get_current_time(char *buf, size_t size) {
 }
 
 void read_config(void) {
-    char *home = getenv("HOME");
+    const char *home = get_home_directory();
     if (!home) return;
     char path[512];
     snprintf(path, sizeof(path), "%s/.aah/servers", home);
@@ -110,8 +148,8 @@ void read_config(void) {
         char *ptr = line;
         char *fields[8];
         int i = 0;
-        // 用 strsep 拆分，保留空字段
-        while (i < 8 && (fields[i] = strsep(&ptr, "|")) != NULL) {
+        // 拆分字段并保留空字段。
+        while (i < 8 && (fields[i] = next_config_field(&ptr)) != NULL) {
             i++;
         }
         // 如果字段数不足，补默认值
@@ -136,20 +174,27 @@ void read_config(void) {
 }
 
 void write_config(void) {
-    char *home = getenv("HOME");
+    const char *home = get_home_directory();
     if (!home) return;
     char path[512];
     snprintf(path, sizeof(path), "%s/.aah/servers", home);
     char dir[512];
     snprintf(dir, sizeof(dir), "%s/.aah", home);
+#ifdef _WIN32
+    _mkdir(dir);
+    FILE *fp = fopen(path, "w");
+#else
     mkdir(dir, 0700);
     chmod(dir, 0700);
 
     mode_t old_umask = umask(0077);
     FILE *fp = fopen(path, "w");
     umask(old_umask);
+#endif
     if (!fp) { perror("fopen"); return; }
+#ifndef _WIN32
     chmod(path, 0600);
+#endif
     server_t *cur = head;
     while (cur) {
         fprintf(fp, "%s|%s|%s|%d|%s|%s|%s|%s\n",
@@ -398,6 +443,32 @@ void connect_server(const char *name) {
     printf("Connecting to %s as %s (%s:%d)\n", name, user, host, port);
     fflush(stdout);
 
+#ifdef _WIN32
+    const char *password_args[] = {
+        "ssh",
+        "-o", "PreferredAuthentications=keyboard-interactive,password",
+        "-o", "NumberOfPasswordPrompts=1",
+        "-p", port_string, target, NULL
+    };
+    const char *default_args[] = {"ssh", "-p", port_string, target, NULL};
+    intptr_t status;
+
+    if (s->password[0] != '\0') {
+        _putenv_s("AAA_PASSWORD", s->password);
+        _putenv_s("AAA_ASKPASS", "1");
+        _putenv_s("SSH_ASKPASS", executable_path);
+        _putenv_s("SSH_ASKPASS_REQUIRE", "force");
+        _putenv_s("DISPLAY", "aaa-askpass");
+        status = _spawnvp(_P_WAIT, "ssh", password_args);
+    } else {
+        status = _spawnvp(_P_WAIT, "ssh", default_args);
+    }
+
+    if (status == -1)
+        perror("ssh");
+    else if (status != 0)
+        fprintf(stderr, "SSH connection failed (exit code %lld)\n", (long long)status);
+#else
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
@@ -430,6 +501,7 @@ void connect_server(const char *name) {
     } else if (WIFSIGNALED(status)) {
         fprintf(stderr, "SSH connection terminated by signal %d\n", WTERMSIG(status));
     }
+#endif
 }
 
 void print_usage(const char *prog) {
@@ -499,25 +571,27 @@ int main(int argc, char **argv) {
         const char *url = NULL;
         const char *password = NULL;
 
-        int opt;
-        int opt_index = 0;
-        static struct option long_opts[] = {
-            {"user", required_argument, 0, 'u'},
-            {"host", required_argument, 0, 'h'},
-            {"port", required_argument, 0, 'p'},
-            {"url",  required_argument, 0, 'r'},
-            {"password", required_argument, 0, 'w'},
-            {0, 0, 0, 0}
-        };
-        optind = 3;
-        while ((opt = getopt_long(argc, argv, "u:h:p:r:w:", long_opts, &opt_index)) != -1) {
-            switch (opt) {
-                case 'u': user = optarg; break;
-                case 'h': host = optarg; break;
-                case 'p': port = atoi(optarg); break;
-                case 'r': url = optarg; break;
-                case 'w': password = optarg; break;
-                default: print_usage(argv[0]); return 1;
+        for (int i = 3; i < argc; i++) {
+            const char *option = argv[i];
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: missing value for option '%s'.\n", option);
+                return 1;
+            }
+            const char *value = argv[++i];
+
+            if (strcmp(option, "--user") == 0 || strcmp(option, "-u") == 0)
+                user = value;
+            else if (strcmp(option, "--host") == 0 || strcmp(option, "-h") == 0)
+                host = value;
+            else if (strcmp(option, "--port") == 0 || strcmp(option, "-p") == 0)
+                port = atoi(value);
+            else if (strcmp(option, "--url") == 0 || strcmp(option, "-r") == 0)
+                url = value;
+            else if (strcmp(option, "--password") == 0 || strcmp(option, "-w") == 0)
+                password = value;
+            else {
+                fprintf(stderr, "Error: unknown option '%s'.\n", option);
+                return 1;
             }
         }
 

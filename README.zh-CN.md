@@ -2,6 +2,8 @@
 
 [English](README.md) | 中文
 
+[![构建与发布](https://github.com/GerryDush/aah/actions/workflows/build-release.yml/badge.svg)](https://github.com/GerryDush/aah/actions/workflows/build-release.yml)
+
 `aaa` 是一个使用 C 编写的轻量级 SSH 服务器管理命令行工具。它可以把 `ssh -p 2222 admin@192.168.1.100` 这样的完整 SSH 命令，简化成 `aaa production` 这样简短、容易记忆的命令。
 
 ## 项目简介
@@ -23,6 +25,7 @@
 - 支持完整命令和单字母缩写。
 - 将连接信息保存在 `~/.aah/servers`。
 - 支持 IPv4、主机名和 IPv6 地址。
+- 支持在 Windows、macOS 和 Linux 上构建。
 
 ## 环境要求
 
@@ -38,7 +41,7 @@ cmake -S . -B build
 cmake --build build
 ```
 
-生成的可执行文件位于 `build/aaa`。
+在 macOS 和 Linux 上，生成的可执行文件位于 `build/aaa`。Windows 使用默认 Visual Studio 生成器时，可执行文件位于 `build/Release/aaa.exe`。
 
 以下示例假设 `aaa` 已添加到 `PATH` 环境变量中。
 
@@ -159,3 +162,14 @@ aaa 1
 ### 密码安全
 
 密码以明文形式保存在 `~/.aah/servers` 中。配置目录和文件的权限会分别限制为当前用户可访问的 `0700` 和 `0600`，但仍建议尽可能使用 SSH 密钥。通过命令行输入密码还可能使密码保留在 Shell 历史记录中。
+
+Windows 无法读取 `HOME` 时，配置文件保存在 `%USERPROFILE%/.aah/servers`。POSIX 的 `0700` 和 `0600` 权限模式仅适用于 macOS 和 Linux。
+
+## 自动发布
+
+每次推送到 `main` 或创建 Pull Request 时，GitHub Actions 都会在 Windows、macOS 和 Linux 上构建并测试项目。推送版本标签后，会自动创建 GitHub Release，上传三个平台的压缩包以及 `SHA256SUMS.txt` 校验文件：
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
